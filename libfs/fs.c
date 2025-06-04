@@ -3,12 +3,14 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include "disk.h"
 #include "fs.h"
 
 #define FS_SIGNATURE "ECS150FS"
 #define FS_BLOCK_SIZE 4096
+#define FAT_EOC 0xFFFF
 
 #pragma pack(push, 1)
 struct superblock {
@@ -83,9 +85,19 @@ int fs_mount(const char *diskname) //NOTE: for all functions, return -1 if failu
 
 int fs_umount(void)
 {
-	if (!is_mounted || block_disk_close() < 0) { //call close virtual disk file
+	if (!is_mounted) { //call close virtual disk file
 		return -1;
 	}
+
+	//for phase 2, write fat block to disk
+	for (uint16_t i = 0; i < sb.fat_blocks; i++) {
+        if (block_write(1 + i, (uint8_t *)fat + (i * FS_BLOCK_SIZE)) < 0) {
+            return -1;
+        }
+    }
+	block_write(sb.root_index, root); //write root back to disk
+
+	block_disk_close();
 	free(fat);
 	fat = NULL;
 	is_mounted = false;
@@ -123,45 +135,123 @@ int fs_info(void)
 
 int fs_create(const char *filename)
 {
-	/* TODO: Phase 2 */
+	if (!is_mounted || filename == NULL) {
+		return -1;
+	}
+	int name_len = strlen(filename);
+	if (name_len == 0 || name_len > FS_FILENAME_LEN - 1) {
+		return -1;
+	}
+
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) { //look for duplicate file name first
+		if (strncmp(root[i].filename, filename, FS_FILENAME_LEN) == 0) {
+			return -1;
+		}
+	}
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) { //create file in empty root dir index
+
+		if (root[i].filename[0] == '\0') {
+			root[i].size = 0;
+			root[i].first_data_index = FAT_EOC;
+			strcpy(root[i].filename, filename);
+			block_write(sb.root_index, root);
+			return 0;
+		}
+	}
+	return -1;
 }
 
 int fs_delete(const char *filename)
 {
-	/* TODO: Phase 2 */
+	if (!is_mounted || filename == NULL) {
+		return -1;
+	}
+
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (strncmp(root[i].filename, filename, FS_FILENAME_LEN) == 0) {
+			uint16_t current_block = root[i].first_data_index;
+			uint16_t next_block;
+			while (current_block != FAT_EOC) { //free all data blocks in fat
+				next_block = fat[current_block];
+				fat[current_block] = 0;
+				current_block = next_block;
+			}
+			//clear root dir entry
+			memset(root[i].filename, 0, FS_FILENAME_LEN);
+			root[i].size = 0;
+			root[i].first_data_index = 0;
+			for (int j = 0; j < sb.fat_blocks; j++) { //send updated fat to disk
+				int result = block_write(1 + j, (uint8_t *)fat + j * FS_BLOCK_SIZE);
+				if (result < 0) {
+					return -1;
+				} else {
+					continue;
+				}
+			}
+			block_write(sb.root_index, root); //send updated root dir to disk
+			return 0;
+		}
+	}
+	return -1;
 }
 
 int fs_ls(void)
 {
-	/* TODO: Phase 2 */
+	if (!is_mounted) {
+		return -1;
+	}
+	printf("FS Ls:\n");
+	for (int i = 0; i < FS_FILE_MAX_COUNT; i++) {
+		if (root[i].filename[0] != '\0') {
+			printf("file: %s, size: %u, data_blk: %u\n", root[i].filename, root[i].size, root[i].first_data_index);
+		}
+	}
+	return 0;
 }
 
 int fs_open(const char *filename)
 {
 	/* TODO: Phase 3 */
+	(void) filename;
+	return 0;
 }
 
 int fs_close(int fd)
 {
 	/* TODO: Phase 3 */
+	(void) fd;
+	return 0;
 }
 
 int fs_stat(int fd)
 {
 	/* TODO: Phase 3 */
+	(void) fd;
+	return 0;
 }
 
 int fs_lseek(int fd, size_t offset)
 {
 	/* TODO: Phase 3 */
+	(void) fd;
+    (void) offset;
+	return 0;
 }
 
 int fs_write(int fd, void *buf, size_t count)
 {
 	/* TODO: Phase 4 */
+	(void) fd;
+    (void) buf;
+    (void) count;
+	return 0;
 }
 
 int fs_read(int fd, void *buf, size_t count)
 {
 	/* TODO: Phase 4 */
+	(void) fd;
+    (void) buf;
+    (void) count;
+	return 0;
 }
