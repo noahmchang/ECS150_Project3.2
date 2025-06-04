@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <stdbool.h>
 
 #include "disk.h"
 #include "fs.h"
@@ -29,10 +30,20 @@ struct root_directory {
 	uint16_t first_data_index; //2 byte
 	uint8_t padding[10]; //10 byte
 };
+
+// Struct for open files (entry for file table)
+struct open_file {
+	int fd;
+	uint32_t offset; //read/wrtie offset for fd
+	struct root_directory *rd_metadata; // point to the rd entry to access metadata
+	bool in_use; //tbale entry is currently being used
+}
+
 static bool is_mounted = false;
 static struct superblock sb;
 static uint16_t *fat = NULL;
 static struct root_directory root[FS_FILE_MAX_COUNT];
+static struct open_file opened_files[FS_OPEN_MAX_COUNT]; //all open files
 
 int fs_mount(const char *diskname) //NOTE: for all functions, return -1 if failure
 {
@@ -138,12 +149,41 @@ int fs_ls(void)
 
 int fs_open(const char *filename)
 {
-	/* TODO: Phase 3 */
+	// not mounted
+	if (is_mounted) {
+		return -1;
+	}
+	// invalid filename = null, empty, too long
+	if (filename == NULL || strlen(filename) == 0 || strlen(filename >= FS_FILENAME_LEN)){
+		return -1; 
+	}
+	//FS_OPEN_MAX_COUNT already opened
+	int num_open = 0;
+	for (int i = 0; i < FS_OPEN_MAX_COUNT; i++){
+		if (of[1] in_use) {
+			num_open++;
+		}
+	}
+	if ( num_open > = FS_OPEN_MAX_COUNT){
+		return -1;
+	}
+
+	
+
+	return 0;
 }
 
 int fs_close(int fd)
 {
-	/* TODO: Phase 3 */
+	// not mounted
+	if (is_mounted) {
+		return -1;
+	}
+
+	// invalid fd
+	// out of bounds
+	
+	// not currently open
 }
 
 int fs_stat(int fd)
