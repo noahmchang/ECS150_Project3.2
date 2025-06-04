@@ -85,7 +85,7 @@ int fs_mount(const char *diskname) //NOTE: for all functions, return -1 if failu
 
 int fs_umount(void)
 {
-	if (!is_mounted) { //call close virtual disk file
+	if (!is_mounted) {
 		return -1;
 	}
 
@@ -97,7 +97,7 @@ int fs_umount(void)
     }
 	block_write(sb.root_index, root); //write root back to disk
 
-	block_disk_close();
+	block_disk_close(); //call close virtual disk file
 	free(fat);
 	fat = NULL;
 	is_mounted = false;
