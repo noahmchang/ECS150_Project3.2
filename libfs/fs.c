@@ -34,11 +34,10 @@ struct root_directory {
 
 // Struct for open files (entry for file table)
 struct open_file {
-	int fd;
 	uint32_t offset; //read/wrtie offset for fd
-	struct root_directory *rd_metadata; // point to the rd entry to access metadata
+	struct root_directory *root_dir; // point to the rd entry to access metadata
 	bool in_use; //tbale entry is currently being used
-}
+};
 
 static bool is_mounted = false;
 static struct superblock sb;
@@ -87,6 +86,13 @@ int fs_mount(const char *diskname) //NOTE: for all functions, return -1 if failu
 		free(fat);
 		block_disk_close();
 		return -1;
+	}
+
+	//initialize opened_files file table
+	for (int i = 0; i < FS_OPEN_MAX_COUNT; i++){
+		opened_files[i].offset = 0;
+		opened_files[i].in_use = false;
+		opened_files[i].root_dir = NULL;
 	}
 
 	is_mounted = true;
@@ -222,54 +228,115 @@ int fs_ls(void)
 int fs_open(const char *filename)
 {
 	// not mounted
-	if (is_mounted) {
+	if (!is_mounted) {
 		return -1;
 	}
 	// invalid filename = null, empty, too long
-	if (filename == NULL || strlen(filename) == 0 || strlen(filename >= FS_FILENAME_LEN)){
+	if (filename == NULL || strlen(filename) == 0 || strlen(filename) >= FS_FILENAME_LEN) {
 		return -1; 
 	}
 	//FS_OPEN_MAX_COUNT already opened
 	int num_open = 0;
 	for (int i = 0; i < FS_OPEN_MAX_COUNT; i++){
-		if (of[1] in_use) {
+		if (opened_files[i].in_use) {
 			num_open++;
 		}
 	}
-	if ( num_open > = FS_OPEN_MAX_COUNT){
+	if ( num_open >= FS_OPEN_MAX_COUNT){
 		return -1;
 	}
-
 	
+	// look for the file in rd
+	struct root_directory *rd_file = NULL;
+	for (int s = 0; s < FS_FILE_MAX_COUNT; s++) {
+		if ((root[s].filename[0] != '\0') && (strncmp(root[s].filename, filename, FS_FILENAME_LEN) == 0)){
+			rd_file = &root[s];
+			break; //found file
+		}
+	} 
+	if (rd_file == NULL){
+		return -1; // can't find filename file
+	}
 
-	return 0;
+	// find first open spot on file table (i think)
+	int fd = -1;
+	for (int m = 0; m < FS_OPEN_MAX_COUNT; m++){
+		if (!opened_files[m].in_use){
+			fd = m;
+			break; //cuz found free index
+		}
+	}
+	
+	// create the table entry for file
+	opened_files[fd].in_use = true;
+	opened_files[fd].offset = 0; //initially 0
+	opened_files[fd].root_dir = rd_file;
+
+	return fd;
 }
 
 int fs_close(int fd)
 {
 	// not mounted
-	if (is_mounted) {
+	if (!is_mounted) {
+		return -1;
+	}
+	// invalid fd
+	// out of bounds
+	if (fd < 0 || fd >= FS_OPEN_MAX_COUNT) {
+		return -1;
+	}
+	// not open
+	if (!opened_files[fd].in_use){
 		return -1;
 	}
 
-	// invalid fd
-	// out of bounds
-	
-	// not currently open
+	//reset
+	opened_files[fd].in_use = false;
+	opened_files[fd].offset = 0; //initially 0
+	opened_files[fd].root_dir = NULL;
+
+	return 0;
 }
 
 int fs_stat(int fd)
 {
-	/* TODO: Phase 3 */
-	(void) fd;
-	return 0;
+	// invalid checks same as fs_close()
+	if (!is_mounted) {
+		return -1;
+	}
+	if (fd < 0 || fd >= FS_OPEN_MAX_COUNT) {
+		return -1;
+	}
+	if (!opened_files[fd].in_use){
+		return -1;
+	}
+
+	struct root_directory *file_metadata = opened_files[fd].root_dir;
+	int file_size = file_metadata->size;
+
+	return file_size;
 }
 
 int fs_lseek(int fd, size_t offset)
 {
-	/* TODO: Phase 3 */
-	(void) fd;
-    (void) offset;
+	if (!is_mounted) {
+		return -1;
+	}
+	if (fd < 0 || fd >= FS_OPEN_MAX_COUNT) {
+		return -1;
+	}
+	if (!opened_files[fd].in_use){
+		return -1;
+	}
+	int file_size = fs_stat(fd);
+	
+	if (offset > (size_t)file_size){ // offset bigger than file
+		return -1;
+	}
+
+	opened_files[fd].offset = offset;
+
 	return 0;
 }
 
