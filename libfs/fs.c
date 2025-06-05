@@ -266,6 +266,10 @@ int fs_open(const char *filename)
 			break; //cuz found free index
 		}
 	}
+
+	if (fd < 0){
+		return -1;
+	}
 	
 	// create the table entry for file
 	opened_files[fd].in_use = true;
