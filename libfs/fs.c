@@ -344,6 +344,25 @@ int fs_lseek(int fd, size_t offset)
 	return 0;
 }
 
+// helper function fo rgetting data block index
+static int get_data_block_index(struct root_directory *file_rd, uint32_t offset){
+	uint16_t cur_dbi = file_rd->first_data_index; // current data block index
+	if (cur_dbi == FAT_EOC){
+		// the file is empty or offset = 0
+		return FAT_EOC;
+	}
+	uint32_t actual_block = offset/FS_BLOCK_SIZE; 
+
+	// actually look for the datablock index
+	for (uint32_t i = 0; i < actual_block; i++){
+		if(cur_dbi == FAT_EOC) { //fat ends too early
+			return -1;
+		}
+		cur_dbi = fat[cur_dbi];
+	}
+	return cur_dbi;
+}
+
 int fs_write(int fd, void *buf, size_t count)
 {
 	/* TODO: Phase 4 */
@@ -355,9 +374,69 @@ int fs_write(int fd, void *buf, size_t count)
 
 int fs_read(int fd, void *buf, size_t count)
 {
-	/* TODO: Phase 4 */
-	(void) fd;
-    (void) buf;
-    (void) count;
-	return 0;
+	// validity check
+	if (!is_mounted || fd < 0 || fd >= FS_OPEN_MAX_COUNT || !opened_files[fd].in_use || buf == NULL){
+		return -1;
+	}
+	
+	// setup
+	struct open_file *open_file_entry = &opened_files[fd];
+	struct root_directory *file_rd = open_file_entry->root_dir;
+	uint32_t file_size = file_rd->size;
+	uint32_t cur_offset = open_file_entry->offset;
+
+	//check how many bytes we can read
+	uint32_t bytes_til_end = 0; 
+	if (file_size > cur_offset) {
+		bytes_til_end = file_size - cur_offset;
+	}
+	if (bytes_til_end == 0){ //nothing to read
+		return -1;
+	} 
+
+	size_t bytes_to_read = bytes_til_end; // num bytes to read either count or bytes until the end of the file
+	if (count < bytes_til_end) { bytes_to_read = count; }
+
+	// buffer read section
+	char *buf_ptr = (char*)buf; //pointer to user buffer
+	size_t num_bytes_actually_read = 0;
+
+	char bounce_buf[FS_BLOCK_SIZE]; // temp buf to read into
+
+	uint16_t cur_dbi = get_data_block_index(file_rd, cur_offset); //get starting data block and offset
+
+	uint32_t cur_block_offset = cur_offset % FS_BLOCK_SIZE;
+	while (num_bytes_actually_read < bytes_to_read) {
+		uint16_t phys_block_num = sb.data_index + cur_dbi;
+		//read to bounce buf
+		if (block_read(phys_block_num, bounce_buf) < 0){
+			return -1;
+		}
+
+		// determine bytes from bounce buf to user buf
+		size_t bytes_remaining = FS_BLOCK_SIZE - cur_block_offset;
+		size_t bytes_to_copy = bytes_to_read - num_bytes_actually_read; 
+		if (bytes_to_copy > bytes_remaining){
+			bytes_to_copy = bytes_remaining;
+		}
+
+		// copy the right amount from bounce buffer to user buffer
+		memcpy(buf_ptr, bounce_buf + cur_block_offset, bytes_to_copy);
+
+		//update ptrs
+		buf_ptr += bytes_to_copy;
+		num_bytes_actually_read += bytes_to_copy;
+		open_file_entry->offset += bytes_to_copy;
+
+		// if filled up fat entry
+		if(num_bytes_actually_read<bytes_to_read){
+			cur_dbi = fat[cur_dbi]; //move to the next block
+			if(cur_dbi == FAT_EOC){
+				break; //ended too early
+			}
+			cur_block_offset = 0;
+		}
+	}
+	
+	return num_bytes_actually_read;
 }

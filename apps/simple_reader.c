@@ -19,7 +19,7 @@ int main(int argc, char *argv[])
 	int fd;
 	char data[26];
 
-	if (argc < 1) {
+	if (argc < 2) {
 		printf("Usage: %s <diskimage>\n", argv[0]);
 		exit(1);
 	}
