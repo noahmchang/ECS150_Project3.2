@@ -10,7 +10,7 @@
 
 #define FS_SIGNATURE "ECS150FS"
 #define FS_BLOCK_SIZE 4096
-#define FAT_EOC 0xFFFF
+#define FAT_END 0xFFFF
 
 #pragma pack(push, 1)
 struct superblock {
@@ -168,7 +168,7 @@ int fs_create(const char *filename)
 
 		if (root[i].filename[0] == '\0') {
 			root[i].size = 0;
-			root[i].first_data_index = FAT_EOC;
+			root[i].first_data_index = FAT_END;
 			strcpy(root[i].filename, filename);
 			block_write(sb.root_index, root);
 			return 0;
@@ -187,7 +187,7 @@ int fs_delete(const char *filename)
 		if (strncmp(root[i].filename, filename, FS_FILENAME_LEN) == 0) {
 			uint16_t current_block = root[i].first_data_index;
 			uint16_t next_block;
-			while (current_block != FAT_EOC) { //free all data blocks in fat
+			while (current_block != FAT_END) { //free all data blocks in fat
 				next_block = fat[current_block];
 				fat[current_block] = 0;
 				current_block = next_block;
@@ -347,15 +347,15 @@ int fs_lseek(int fd, size_t offset)
 // helper function fo rgetting data block index
 static int get_data_block_index(struct root_directory *file_rd, uint32_t offset){
 	uint16_t cur_dbi = file_rd->first_data_index; // current data block index
-	if (cur_dbi == FAT_EOC){
+	if (cur_dbi == FAT_END){
 		// the file is empty or offset = 0
-		return FAT_EOC;
+		return FAT_END;
 	}
 	uint32_t actual_block = offset/FS_BLOCK_SIZE; 
 
 	// actually look for the datablock index
 	for (uint32_t i = 0; i < actual_block; i++){
-		if(cur_dbi == FAT_EOC) { //fat ends too early
+		if(cur_dbi == FAT_END) { //fat ends too early
 			return -1;
 		}
 		cur_dbi = fat[cur_dbi];
@@ -365,17 +365,106 @@ static int get_data_block_index(struct root_directory *file_rd, uint32_t offset)
 
 int fs_write(int fd, void *buf, size_t count)
 {
-	/* TODO: Phase 4 */
-	(void) fd;
-    (void) buf;
-    (void) count;
-	return 0;
+	if (!is_mounted || fd < 0 || fd >= FS_OPEN_MAX_COUNT || !opened_files[fd].in_use || buf == NULL) { //edge cases (that i could think of at least)
+		return -1;
+	}
+	struct open_file *file = &opened_files[fd];
+	struct root_directory *meta = file->root_dir;
+	uint32_t offset = file->offset;
+	uint32_t file_size = meta->size;
+	uint32_t block_index = meta->first_data_index;
+	uint32_t blocks_to_skip = offset / FS_BLOCK_SIZE; //moves certain data block based on the offset
+	uint32_t offset_in_block = offset % FS_BLOCK_SIZE;
+
+	if (block_index == FAT_END && count > 0) { //if file is empty and want to write, allocate a block
+		for (uint16_t i = 0; i < sb.data_blocks; i++) {
+			if (fat[i] == 0) {
+				fat[i] = FAT_END;
+				meta->first_data_index = i;
+				block_index = i;
+				break;
+			}
+		}
+		if (block_index == FAT_END) {//there's no space to allocate :c
+			return 0; 
+		}
+	}
+
+	uint32_t current_block = block_index;
+	for (uint32_t i = 0; i < blocks_to_skip; i++) { //traversing
+		if (fat[current_block] == FAT_END) { //allocate new block where we want to start writing; move to next block if not where you want to write
+			int found = 0;
+			for (uint16_t j = 0; j < sb.data_blocks; j++) {
+				if (fat[j] == 0) {
+					fat[current_block] = j;
+					fat[j] = FAT_END;
+					current_block = j;
+					found = 1;
+					break;
+				}
+			}
+			if (!found) {
+				return 0; //there's no space left
+			}
+		} else {
+			current_block = fat[current_block];
+		}
+	}
+	block_index = current_block;
+
+	char temp_buf[FS_BLOCK_SIZE];
+	char *src = (char *)buf;
+	size_t total_written = 0;
+	while (total_written < count) { //loop for requested number of bytes
+		uint16_t disk_block = sb.data_index + block_index;
+		if (offset_in_block > 0 || (count - total_written) < FS_BLOCK_SIZE) { //if not writing whole block, read existing one
+			if (block_read(disk_block, temp_buf) < 0) {
+				return -1;
+			}
+		}
+
+		//how many bytes to write in current block
+		size_t space_left = FS_BLOCK_SIZE - offset_in_block;
+		size_t to_write = count - total_written;
+		if (to_write > space_left) {
+			to_write = space_left;
+		}
+		memcpy(temp_buf + offset_in_block, src + total_written, to_write);
+		if (block_write(disk_block, temp_buf) < 0) {
+			return -1;
+		}
+
+		total_written += to_write;
+		file->offset += to_write;
+		offset_in_block = 0; //start at beginning
+		if (total_written < count) { //move to next block if there's still data to write
+			if (fat[block_index] == FAT_END) {
+				int found = 0;
+				for (uint16_t j = 0; j < sb.data_blocks; j++) { //allocate new block at end
+					if (fat[j] == 0) {
+						fat[block_index] = j;
+						fat[j] = FAT_END;
+						block_index = j;
+						found = 1;
+						break;
+					}
+				}
+				if (!found) break;
+			} else {
+				block_index = fat[block_index];
+			}
+		}
+	}
+
+	if (file->offset > file_size) { //if wrote beyond end, update file size
+		meta->size = file->offset;
+	}
+	return total_written;
 }
 
 int fs_read(int fd, void *buf, size_t count)
 {
-	// validity check
-	if (!is_mounted || fd < 0 || fd >= FS_OPEN_MAX_COUNT || !opened_files[fd].in_use || buf == NULL){
+	if (!is_mounted || fd < 0 || fd >= FS_OPEN_MAX_COUNT || !opened_files[fd].in_use || buf == NULL){ //same edge cases
 		return -1;
 	}
 	
@@ -431,7 +520,7 @@ int fs_read(int fd, void *buf, size_t count)
 		// if filled up fat entry
 		if(num_bytes_actually_read<bytes_to_read){
 			cur_dbi = fat[cur_dbi]; //move to the next block
-			if(cur_dbi == FAT_EOC){
+			if(cur_dbi == FAT_END){
 				break; //ended too early
 			}
 			cur_block_offset = 0;
