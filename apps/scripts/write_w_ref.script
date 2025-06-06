@@ -1,0 +1,6 @@
+MOUNT
+CREATE  read_test
+OPEN    read_test
+WRITE   DATA    0123456789
+CLOSE
+UMOUNT

@@ -1,0 +1,6 @@
+MOUNT
+OPEN    read_test
+SEEK    0
+READ    10  DATA    0123456789
+CLOSE
+UMOUNT

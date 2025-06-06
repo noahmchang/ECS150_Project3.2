@@ -1,5 +1,0 @@
-MOUNT
-CREATE my_file
-WRITE my_file DATA
-0123456789qwertyuiopasdfghjklzxcvbnm
-UNMOUNT
